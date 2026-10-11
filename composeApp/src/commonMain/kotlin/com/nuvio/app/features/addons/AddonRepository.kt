@@ -1,6 +1,7 @@
 package com.nuvio.app.features.addons
 
 import co.touchlab.kermit.Logger
+import com.nuvio.app.core.network.OfflineMode
 import com.nuvio.app.core.network.SupabaseProvider
 import com.nuvio.app.core.sync.putSyncOriginClientId
 import com.nuvio.app.features.profiles.ProfileRepository
@@ -110,6 +111,7 @@ object AddonRepository {
     }
 
     suspend fun pullFromServer(profileId: Int) {
+        if (OfflineMode.enabled) return
         currentProfileId = resolveEffectiveProfileId(profileId)
         log.i { "pullFromServer() — profileId=$profileId, initialized=$initialized" }
         runCatching {
@@ -343,6 +345,7 @@ object AddonRepository {
     }
 
     private fun pushToServer() {
+        if (OfflineMode.enabled) return
         if (isUsingPrimaryAddonsFromSecondaryProfile()) return
         val profileId = currentProfileId
         val addons = _uiState.value.addons

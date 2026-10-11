@@ -29,10 +29,14 @@ object SupabaseProvider {
     @OptIn(SupabaseInternal::class)
     private fun createClient(): SupabaseClient {
         val configuration = ServerConfigurationRepository.active.value
+        // Offline mode: anything that still reaches for the backend fails instantly on this
+        // dead local port instead of contacting a real server (or crashing on a blank URL).
+        val backendUrl = if (OfflineMode.enabled) "http://127.0.0.1:9" else configuration.backendUrl
+        val backendKey = if (OfflineMode.enabled) "offline" else configuration.publishableKey
         val userAgent = "NuvioMobile/${AppVersionConfig.VERSION_NAME.ifBlank { "dev" }}"
         return createSupabaseClient(
-            supabaseUrl = configuration.backendUrl,
-            supabaseKey = configuration.publishableKey,
+            supabaseUrl = backendUrl,
+            supabaseKey = backendKey,
         ) {
             httpConfig {
                 install(BackendRateLimitPlugin) {

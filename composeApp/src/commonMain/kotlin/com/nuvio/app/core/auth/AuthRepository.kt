@@ -1,6 +1,7 @@
 package com.nuvio.app.core.auth
 
 import co.touchlab.kermit.Logger
+import com.nuvio.app.core.network.OfflineMode
 import com.nuvio.app.core.network.SupabaseProvider
 import com.nuvio.app.core.storage.LocalAccountDataCleaner
 import io.github.jan.supabase.auth.auth
@@ -42,6 +43,19 @@ object AuthRepository {
         initialized = true
 
         val savedAnonId = AuthStorage.loadAnonymousUserId()
+        if (OfflineMode.enabled) {
+            // No backend: skip the sign-in screen and never open a Supabase session.
+            if (savedAnonId == null) {
+                signInAnonymously()
+            } else {
+                _state.value = AuthState.Authenticated(
+                    userId = savedAnonId,
+                    email = null,
+                    isAnonymous = true,
+                )
+            }
+            return
+        }
         if (savedAnonId != null) {
             _state.value = AuthState.Authenticated(
                 userId = savedAnonId,
@@ -155,7 +169,12 @@ object AuthRepository {
             Result.success(Unit)
         }
         val localCleanup = runCatching { LocalAccountDataCleaner.wipe() }
-        _state.value = AuthState.Unauthenticated
+        if (OfflineMode.enabled) {
+            // No backend to sign in to: start over as a fresh local user instead of a dead sign-in screen.
+            signInAnonymously()
+        } else {
+            _state.value = AuthState.Unauthenticated
+        }
 
         val failure = anonymousRead.exceptionOrNull()
             ?: anonymousClear.exceptionOrNull()

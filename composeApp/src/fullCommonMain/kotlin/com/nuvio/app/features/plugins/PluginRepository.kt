@@ -1,6 +1,7 @@
 package com.nuvio.app.features.plugins
 
 import co.touchlab.kermit.Logger
+import com.nuvio.app.core.network.OfflineMode
 import com.nuvio.app.core.network.SupabaseProvider
 import com.nuvio.app.features.addons.httpGetText
 import com.nuvio.app.features.profiles.ProfileRepository
@@ -117,6 +118,7 @@ actual object PluginRepository {
     }
 
     actual suspend fun pullFromServer(profileId: Int) {
+        if (OfflineMode.enabled) return
         val effectiveProfileId = resolveEffectiveProfileId(profileId)
         ensureStateLoadedForProfile(effectiveProfileId)
         runCatching {
@@ -503,6 +505,7 @@ actual object PluginRepository {
     }
 
     private fun pushToServer() {
+        if (OfflineMode.enabled) return
         scope.launch {
             runCatching {
                 val repos = _uiState.value.repositories.mapIndexed { index, repo ->

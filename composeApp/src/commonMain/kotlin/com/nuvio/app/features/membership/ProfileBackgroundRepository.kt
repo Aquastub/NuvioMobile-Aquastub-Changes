@@ -1,6 +1,7 @@
 package com.nuvio.app.features.membership
 
 import co.touchlab.kermit.Logger
+import com.nuvio.app.core.network.OfflineMode
 import com.nuvio.app.core.network.SupabaseProvider
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.storage.storage
@@ -46,6 +47,7 @@ object ProfileBackgroundRepository {
 
     fun ensureLoaded() {
         hydrateFromCacheIfNeeded()
+        if (OfflineMode.enabled) return
         if (remoteLoaded || loadJob?.isActive == true) return
         loadJob = scope.launch {
             try {
