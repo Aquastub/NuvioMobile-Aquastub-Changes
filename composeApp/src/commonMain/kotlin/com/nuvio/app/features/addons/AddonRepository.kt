@@ -67,7 +67,7 @@ object AddonRepository {
         currentProfileId = effectiveProfileId
         log.d { "initialize() — loading local addons for profile $currentProfileId" }
 
-        val storedUrls = dedupeManifestUrls(AddonStorage.loadInstalledAddonUrls(currentProfileId))
+        val storedUrls = withBuiltInLocalAddons(dedupeManifestUrls(AddonStorage.loadInstalledAddonUrls(currentProfileId)))
         val enabledByUrl = loadLocalEnabledStates()
         log.d { "initialize() — local addon count: ${storedUrls.size}" }
         if (storedUrls.isEmpty()) return
@@ -129,7 +129,8 @@ object AddonRepository {
                 }
             }
 
-            val urls = rowsByUrl.keys.toList()
+            val urls = withBuiltInLocalAddons(rowsByUrl.keys.toList())
+            val localEnabledStates = loadLocalEnabledStates()
             log.i { "pullFromServer() — server returned ${rows.size} addons" }
             urls.forEachIndexed { i, u -> log.d { "  server[$i]: $u" } }
 
@@ -140,7 +141,7 @@ object AddonRepository {
                     existingByUrl[url].toPendingAddon(
                         manifestUrl = url,
                         userSetName = row?.name?.takeIf { it.isNotBlank() },
-                        enabled = row?.enabled,
+                        enabled = row?.enabled ?: localEnabledStates[url],
                     )
                 },
             )
@@ -212,6 +213,9 @@ object AddonRepository {
 
     fun removeAddon(manifestUrl: String) {
         if (isUsingPrimaryAddonsFromSecondaryProfile()) return
+        if (manifestUrl.isLocalAddonUrl() && !LocalAddonRegistry.removeUserInstalled(manifestUrl)) {
+            return // built-in: disable instead of removing
+        }
         log.i { "removeAddon() — $manifestUrl" }
         var changed = false
         _uiState.update { current ->
@@ -342,6 +346,7 @@ object AddonRepository {
         if (isUsingPrimaryAddonsFromSecondaryProfile()) return
         val profileId = currentProfileId
         val addons = _uiState.value.addons
+            .filterNot { it.manifestUrl.isLocalAddonUrl() } // local addons never sync to the server
             .distinctBy { it.manifestUrl }
             .mapIndexed { index, addon ->
                 AddonPushItem(
@@ -473,7 +478,7 @@ private fun normalizeManifestUrl(rawUrl: String): String {
     require(trimmed.isNotEmpty()) { runBlocking { getString(Res.string.addons_error_enter_url) } }
 
     val normalizedScheme = when {
-        trimmed.startsWith("http://") || trimmed.startsWith("https://") -> trimmed
+        trimmed.startsWith("http://") || trimmed.startsWith("https://") || trimmed.startsWith(LOCAL_ADDON_SCHEME) -> trimmed
         trimmed.startsWith("stremio://") -> "https://${trimmed.removePrefix("stremio://")}"
         else -> "https://$trimmed"
     }
@@ -489,3 +494,6 @@ private fun normalizeManifestUrl(rawUrl: String): String {
 
     return if (query.isEmpty()) manifestPath else "$manifestPath?$query"
 }
+
+private fun withBuiltInLocalAddons(urls: List<String>): List<String> =
+    (urls + LocalAddonRegistry.manifestUrls()).distinct()

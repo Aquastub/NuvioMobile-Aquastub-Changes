@@ -182,7 +182,7 @@ jobs:
           done
 
       - name: Build full release APKs
-        run: ./gradlew :androidApp:assembleFullRelease -Pnuvio.app.versionName="${RELEASE_VERSION}" --stacktrace
+        run: chmod +x ./gradlew && ./gradlew :androidApp:assembleFullRelease -Pnuvio.app.versionName="${RELEASE_VERSION}" --stacktrace
 
       - name: Upload Android artifacts
         uses: actions/upload-artifact@v7

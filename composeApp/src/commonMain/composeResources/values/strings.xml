@@ -2459,4 +2459,15 @@
     <string name="stream_info_subtitle_source_embedded">Embedded</string>
     <string name="stream_info_player_engine">Player Engine</string>
     <string name="stream_info_server">Server</string>
+    <string name="addons_zip_description">Install an addon from an ADINST file (.adinst). The addon runs on this device, no server needed. Only install ADINST files from sources you trust.</string>
+    <string name="addons_zip_install_button">Install ADINST</string>
+    <string name="addons_zip_confirm_title">Install addon?</string>
+    <string name="addons_zip_confirm_message">%1$s will be installed. Addons can make network requests, so only continue if you trust the source.</string>
+    <string name="addons_zip_confirm_install">Install</string>
+    <string name="addons_zip_installing">Installing…</string>
+    <string name="addons_zip_success_title">Addon installed</string>
+    <string name="addons_zip_success_message">installed</string>
+    <string name="addons_zip_updated_message">updated</string>
+    <string name="addons_zip_wrong_extension">Choose an ADINST file (.adinst).</string>
+    <string name="addons_zip_failure_title">Couldn't install addon</string>
 </resources>

@@ -12,6 +12,7 @@ import coil3.request.CachePolicy
 import coil3.request.crossfade
 import coil3.svg.SvgDecoder
 import com.nuvio.app.core.poster.CustomPosterFallbackInterceptor
+import com.nuvio.app.features.addons.registerFlavorLocalAddons
 
 /**
  * Custom Application class that implements [SingletonImageLoader.Factory] to guarantee
@@ -20,6 +21,12 @@ import com.nuvio.app.core.poster.CustomPosterFallbackInterceptor
  * before MainActivity.onCreate, and interceptors registered later are ignored.
  */
 class NuvioApplication : Application(), SingletonImageLoader.Factory {
+
+    override fun onCreate() {
+        super.onCreate()
+        // Before AddonRepository.initialize() reads the installed addons.
+        registerFlavorLocalAddons(applicationContext)
+    }
 
     override fun newImageLoader(context: android.content.Context): ImageLoader {
         return ImageLoader.Builder(context)
