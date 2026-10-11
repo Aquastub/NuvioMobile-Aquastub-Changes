@@ -2,6 +2,7 @@ package com.nuvio.app.features.details
 
 import co.touchlab.kermit.Logger
 import com.nuvio.app.features.addons.AddonManifest
+import com.nuvio.app.features.addons.isLocalAddonUrl
 import com.nuvio.app.features.addons.AddonRepository
 import com.nuvio.app.features.addons.buildAddonResourceUrl
 import com.nuvio.app.features.addons.enabledAddons
@@ -220,7 +221,10 @@ object MetaDetailsRepository {
         val manifests = findReadyMetaManifests(type = type, id = metaLookupId)
 
         for (manifest in manifests) {
-            val result = withTimeoutOrNull(FETCH_TIMEOUT_MS) {
+            // Local addons do their own network work on the device (a playlist or channel can need
+            // several requests), so they get far longer than a remote addon's single request.
+            val timeoutMs = if (manifest.transportUrl.isLocalAddonUrl()) LOCAL_ADDON_FETCH_TIMEOUT_MS else FETCH_TIMEOUT_MS
+            val result = withTimeoutOrNull(timeoutMs) {
                 tryFetchMeta(manifest, type, metaLookupId, includeMdbList = false)
             }
             if (result != null) {
@@ -270,6 +274,7 @@ object MetaDetailsRepository {
     }
 
     private const val FETCH_TIMEOUT_MS = 5_000L
+    private const val LOCAL_ADDON_FETCH_TIMEOUT_MS = 30_000L
     private const val METADATA_PROVIDER_READY_TIMEOUT_MS = 10_000L
     private const val TMDB_ENRICH_TIMEOUT_MS = 5_000L
     private const val MDBLIST_ENRICH_TIMEOUT_MS = 5_000L
