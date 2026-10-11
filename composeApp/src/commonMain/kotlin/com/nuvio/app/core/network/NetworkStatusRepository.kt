@@ -136,6 +136,9 @@ object NetworkStatusRepository {
             return NetworkCondition.NoInternet
         }
 
+        // Offline mode has no backend to reach, so "internet works" is all that matters.
+        if (OfflineMode.enabled) return NetworkCondition.Online
+
         val supabaseReachable = SupabaseEndpointConfig.restEndpointUrls().any { url ->
             probeReachable(
                 url = url,
