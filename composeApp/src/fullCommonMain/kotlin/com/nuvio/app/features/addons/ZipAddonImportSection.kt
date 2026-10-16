@@ -33,12 +33,35 @@ import nuvio.composeapp.generated.resources.addons_zip_success_message
 import nuvio.composeapp.generated.resources.addons_zip_success_title
 import nuvio.composeapp.generated.resources.addons_zip_updated_message
 import nuvio.composeapp.generated.resources.addons_zip_wrong_extension
+import nuvio.composeapp.generated.resources.addons_zip_invalid
+import nuvio.composeapp.generated.resources.addons_zip_programs_inside
+import nuvio.composeapp.generated.resources.addons_zip_permissions_title
+import nuvio.composeapp.generated.resources.addons_permission_programs
+import nuvio.composeapp.generated.resources.addons_permission_player_ui
+import nuvio.composeapp.generated.resources.addons_permission_unknown
 import org.jetbrains.compose.resources.stringResource
 
 private sealed interface ZipImportState {
-    data class Confirm(val bytes: ByteArray, val fileName: String) : ZipImportState
+    data class Confirm(val path: String, val name: String, val permissions: Set<String>, val programs: List<String>) : ZipImportState
     data object Installing : ZipImportState
     data class Done(val message: String, val success: Boolean) : ZipImportState
+}
+
+/** The confirmation text, including every permission the addon asked for in plain words. */
+@Composable
+private fun confirmMessage(name: String, permissions: Set<String>, programs: List<String>): String {
+    val base = stringResource(Res.string.addons_zip_confirm_message, name)
+    if (permissions.isEmpty()) return base
+    val header = stringResource(Res.string.addons_zip_permissions_title)
+    val lines = permissions.sorted().map { permission ->
+        when (permission) {
+            PERMISSION_PROGRAMS -> stringResource(Res.string.addons_permission_programs)
+            PERMISSION_PLAYER_UI -> stringResource(Res.string.addons_permission_player_ui)
+            else -> stringResource(Res.string.addons_permission_unknown, permission)
+        }
+    }
+    val carried = if (programs.isEmpty()) "" else "\n" + stringResource(Res.string.addons_zip_programs_inside, programs.joinToString(", "))
+    return base + "\n\n" + header + "\n" + lines.joinToString("\n") { "\u2022 $it" } + carried
 }
 
 @Composable
@@ -53,11 +76,22 @@ internal fun ZipAddonImportSection() {
     val updatedMessage = stringResource(Res.string.addons_zip_updated_message)
 
     val wrongExtensionMessage = stringResource(Res.string.addons_zip_wrong_extension)
-    val pickZip = rememberZipAddonPicker { bytes, fileName ->
-        state = if (fileName.endsWith(".adinst", ignoreCase = true)) {
-            ZipImportState.Confirm(bytes, fileName)
-        } else {
+    val invalidMessage = stringResource(Res.string.addons_zip_invalid)
+    val pickZip = rememberZipAddonPicker { path, fileName ->
+        state = if (!fileName.endsWith(".adinst", ignoreCase = true)) {
             ZipImportState.Done(message = wrongExtensionMessage, success = false)
+        } else {
+            val inspection = ZipAddonManager.inspect(path)
+            if (inspection == null) {
+                ZipImportState.Done(message = invalidMessage, success = false)
+            } else {
+                ZipImportState.Confirm(
+                    path = path,
+                    name = inspection.name.ifBlank { fileName },
+                    permissions = inspection.permissions,
+                    programs = inspection.programs,
+                )
+            }
         }
     }
 
@@ -80,14 +114,14 @@ internal fun ZipAddonImportSection() {
         null -> Unit
         is ZipImportState.Confirm -> NuvioStatusModal(
             title = stringResource(Res.string.addons_zip_confirm_title),
-            message = stringResource(Res.string.addons_zip_confirm_message, current.fileName),
+            message = confirmMessage(current.name, current.permissions, current.programs),
             isVisible = true,
             confirmText = stringResource(Res.string.addons_zip_confirm_install),
             dismissText = stringResource(Res.string.action_cancel),
             onConfirm = {
                 state = ZipImportState.Installing
                 scope.launch {
-                    state = when (val result = ZipAddonManager.install(current.bytes)) {
+                    state = when (val result = ZipAddonManager.install(current.path)) {
                         is ZipAddonManager.InstallResult.Success -> ZipImportState.Done(
                             message = "${result.name}: ${if (result.updated) updatedMessage else successMessage}",
                             success = true,

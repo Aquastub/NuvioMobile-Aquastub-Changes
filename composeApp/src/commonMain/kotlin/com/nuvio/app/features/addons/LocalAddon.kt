@@ -19,8 +19,14 @@ interface LocalAddon {
     /** Stremio manifest JSON. */
     suspend fun manifest(): String
 
-    /** Stremio response JSON for catalog / meta / stream / subtitles requests. */
+    /** Stremio response JSON for catalog / meta / stream / subtitles requests, or "action" requests from the player. */
     suspend fun handle(request: LocalAddonRequest): String
+
+    /** What the addon asked to be allowed to do ("programs", "playerUi"). Shown to the user at install. */
+    val permissions: Set<String> get() = emptySet()
+
+    /** Buttons this addon adds to the video player (needs the "playerUi" permission). */
+    val playerActions: List<AddonPlayerAction> get() = emptyList()
 
     /** True for addons the user installed (e.g. from a ZIP) and may remove again. */
     val removable: Boolean get() = false
@@ -28,6 +34,17 @@ interface LocalAddon {
     /** Called once when a [removable] addon is removed, to delete its files. */
     fun onRemoved() = Unit
 }
+
+/** A button an addon adds to the player. [match] is an optional regex tested against the stream URL. */
+data class AddonPlayerAction(val id: String, val label: String, val match: String? = null)
+
+/** What the player tells an addon about what is playing. */
+data class PlayerAddonContext(
+    val title: String,
+    val streamTitle: String,
+    val providerName: String,
+    val streamUrl: String,
+)
 
 data class LocalAddonRequest(
     val resource: String,          // "catalog", "meta", "stream", "subtitles"
@@ -42,6 +59,8 @@ data class LocalAddonRequest(
  */
 object LocalAddonRegistry {
     private val addons = linkedMapOf<String, LocalAddon>()
+
+    fun all(): List<LocalAddon> = addons.values.toList()
 
     fun register(addon: LocalAddon) {
         addons[addon.slug] = addon
@@ -101,7 +120,10 @@ private fun String.percentDecode(): String {
     return bytes.toByteArray().decodeToString()
 }
 
-/** Lets a build flavor add UI to the Addons screen (e.g. "Install from ZIP"). */
+/** Lets a build flavor add UI: the Addons screen's install card, and addon buttons in the player. */
 object LocalAddonUi {
     var importContent: (@androidx.compose.runtime.Composable () -> Unit)? = null
+
+    /** Draws the addon-provided buttons for the player. Receives what is playing and a modifier for placement. */
+    var playerActions: (@androidx.compose.runtime.Composable (PlayerAddonContext, androidx.compose.ui.Modifier) -> Unit)? = null
 }

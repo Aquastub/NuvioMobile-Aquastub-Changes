@@ -12,84 +12,155 @@ import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.ByteArrayInputStream
 import java.io.File
-import java.util.zip.ZipInputStream
+import java.io.FileOutputStream
+import java.util.zip.ZipFile
 
+/**
+ * Storage for installed ADINST addons. Packages can carry programs (ffmpeg, yt-dlp, ...), so they are
+ * handled as files on disk and unpacked as a stream, never held in memory as a whole.
+ *
+ *   filesDir/local_addons/<slug>/        the unpacked package
+ *   filesDir/local_addon_data/<slug>/    private working folder for the addon's programs
+ */
 internal object ZipAddonPlatform {
     private const val DIRECTORY = "local_addons"
+    private const val DATA_DIRECTORY = "local_addon_data"
     private const val MAX_ENTRIES = 500
-    private const val MAX_TOTAL_BYTES = 16L * 1024 * 1024
+    const val MAX_PACKAGE_BYTES = 300L * 1024 * 1024
+    private const val MAX_FILE_BYTES = 250L * 1024 * 1024
+    private const val SMALL_FILE_BYTES = 2L * 1024 * 1024
 
     private var root: File? = null
+    private var dataRoot: File? = null
 
     val supported: Boolean get() = root != null
 
     fun initialize(context: Context) {
         root = File(context.filesDir, DIRECTORY).also { it.mkdirs() }
+        dataRoot = File(context.filesDir, DATA_DIRECTORY).also { it.mkdirs() }
     }
 
-    fun unzip(bytes: ByteArray): Map<String, ByteArray> {
+    /** Names of every file in the package (safe, "/"-separated). */
+    fun entryNames(path: String): Set<String> = ZipFile(File(path)).use { zip ->
+        val names = LinkedHashSet<String>()
+        for (entry in zip.entries()) {
+            if (entry.isDirectory) continue
+            require(names.size < MAX_ENTRIES) { "The ADINST has too many files" }
+            names += safeName(entry.name)
+        }
+        require(names.isNotEmpty()) { "The file is empty or not a valid ADINST (ZIP) package" }
+        names
+    }
+
+    /** The package's small files (manifest, scripts...), read into memory. Big files (programs) are skipped. */
+    fun readSmallFiles(path: String): Map<String, ByteArray> = ZipFile(File(path)).use { zip ->
         val files = LinkedHashMap<String, ByteArray>()
-        var total = 0L
-        ZipInputStream(ByteArrayInputStream(bytes)).use { zip ->
-            while (true) {
-                val entry = zip.nextEntry ?: break
-                val name = safeName(entry.name)
-                if (entry.isDirectory) {
-                    zip.closeEntry()
-                    continue
+        for (entry in zip.entries()) {
+            if (entry.isDirectory || entry.size !in 0..SMALL_FILE_BYTES) continue
+            files[safeName(entry.name)] = readBounded(zip, entry, SMALL_FILE_BYTES)
+        }
+        files
+    }
+
+    /**
+     * Unpacks the whole package into the addon's folder as a stream, stripping [prefix] (a wrapping
+     * folder). The old version is replaced only once everything has been written.
+     */
+    fun installPackage(slug: String, path: String, prefix: String) {
+        val target = addonDir(slug)
+        val base = checkNotNull(root) { "Addon storage is not initialised" }
+        val staging = File(base, ".$slug.new").also {
+            it.deleteRecursively()
+            it.mkdirs()
+        }
+        try {
+            var total = 0L
+            ZipFile(File(path)).use { zip ->
+                for (entry in zip.entries()) {
+                    if (entry.isDirectory) continue
+                    val name = safeName(entry.name)
+                    if (!name.startsWith(prefix)) continue
+                    val relative = name.removePrefix(prefix)
+                    val out = File(staging, relative)
+                    check(out.canonicalPath.startsWith(staging.canonicalPath + File.separator)) { "Unsafe path in ADINST" }
+                    out.parentFile?.mkdirs()
+                    var written = 0L
+                    zip.getInputStream(entry).use { input ->
+                        FileOutputStream(out).use { output ->
+                            val buffer = ByteArray(64 * 1024)
+                            while (true) {
+                                val read = input.read(buffer)
+                                if (read < 0) break
+                                written += read
+                                total += read
+                                require(written <= MAX_FILE_BYTES) { "A file in the ADINST is too large" }
+                                require(total <= MAX_PACKAGE_BYTES) { "The ADINST is too large when unpacked" }
+                                output.write(buffer, 0, read)
+                            }
+                        }
+                    }
+                    out.setReadable(true, false)
                 }
-                require(files.size < MAX_ENTRIES) { "The ADINST has too many files" }
-                // Bounded read: a small ZIP can expand to gigabytes, so stop as soon as the limit is hit.
-                val out = java.io.ByteArrayOutputStream()
-                val buffer = ByteArray(16 * 1024)
-                while (true) {
-                    val read = zip.read(buffer)
-                    if (read < 0) break
-                    total += read
-                    require(total <= MAX_TOTAL_BYTES) { "The ADINST is too large when unpacked" }
-                    out.write(buffer, 0, read)
-                }
-                files[name] = out.toByteArray()
-                zip.closeEntry()
             }
-        }
-        require(files.isNotEmpty()) { "The file is empty or not a valid ADINST (ZIP) package" }
-        return files
-    }
-
-    fun saveAddon(slug: String, files: Map<String, ByteArray>) {
-        val dir = addonDir(slug)
-        dir.deleteRecursively()
-        files.forEach { (name, data) ->
-            val target = File(dir, safeName(name))
-            check(target.canonicalPath.startsWith(dir.canonicalPath + File.separator)) { "Unsafe path in ADINST" }
-            target.parentFile?.mkdirs()
-            target.writeBytes(data)
+            target.deleteRecursively()
+            check(staging.renameTo(target)) { "Could not save the addon" }
+        } catch (error: Throwable) {
+            staging.deleteRecursively()
+            throw error
         }
     }
 
+    /** Small files of every installed addon (what the script runner needs). Programs stay on disk. */
     fun loadAddons(): Map<String, Map<String, ByteArray>> {
         val base = root ?: return emptyMap()
-        return base.listFiles { file -> file.isDirectory }.orEmpty().associate { dir ->
+        return base.listFiles { file -> file.isDirectory && !file.name.startsWith(".") }.orEmpty().associate { dir ->
             dir.name to dir.walkTopDown()
-                .filter { it.isFile }
+                .filter { it.isFile && it.length() <= SMALL_FILE_BYTES }
                 .associate { it.relativeTo(dir).invariantSeparatorsPath to it.readBytes() }
         }
     }
 
     fun deleteAddon(slug: String) {
         addonDir(slug).deleteRecursively()
+        dataDir(slug).deleteRecursively()
     }
 
-    private fun addonDir(slug: String): File {
+    /** Where the unpacked package lives (programs are found here). */
+    fun addonDir(slug: String): File {
         val base = checkNotNull(root) { "Addon storage is not initialised" }
         require(slug.matches(Regex("[a-z0-9-]+"))) { "Invalid addon id" }
         return File(base, slug)
     }
 
-    /** Rejects absolute paths and ".." so a ZIP cannot write outside its addon folder. */
+    /** The addon's private working folder, kept when the addon is updated. */
+    fun dataDir(slug: String): File {
+        val base = checkNotNull(dataRoot) { "Addon storage is not initialised" }
+        require(slug.matches(Regex("[a-z0-9-]+"))) { "Invalid addon id" }
+        return File(base, slug).also { it.mkdirs() }
+    }
+
+    fun discard(path: String) {
+        runCatching { File(path).delete() }
+    }
+
+    private fun readBounded(zip: ZipFile, entry: java.util.zip.ZipEntry, limit: Long): ByteArray {
+        val out = java.io.ByteArrayOutputStream()
+        val buffer = ByteArray(16 * 1024)
+        var total = 0L
+        zip.getInputStream(entry).use { input ->
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                total += read
+                require(total <= limit) { "A file in the ADINST is larger than it says" }
+                out.write(buffer, 0, read)
+            }
+        }
+        return out.toByteArray()
+    }
+
+    /** Rejects absolute paths and "..", so a package cannot write outside its addon folder. */
     private fun safeName(raw: String): String {
         val name = raw.replace('\\', '/').trimStart('/')
         require(name.split('/').none { it == ".." }) { "The ADINST contains an unsafe path" }
@@ -97,8 +168,9 @@ internal object ZipAddonPlatform {
     }
 }
 
+/** Copies the picked file to the cache (bounded) and hands back its path, so big packages never sit in memory. */
 @Composable
-internal fun rememberZipAddonPicker(onPicked: (bytes: ByteArray, fileName: String) -> Unit): () -> Unit {
+internal fun rememberZipAddonPicker(onPicked: (path: String, fileName: String) -> Unit): () -> Unit {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val latestOnPicked = rememberUpdatedState(onPicked)
@@ -107,26 +179,36 @@ internal fun rememberZipAddonPicker(onPicked: (bytes: ByteArray, fileName: Strin
         scope.launch {
             val picked = withContext(Dispatchers.IO) {
                 runCatching {
-                    // Never read more than the install limit (+1 byte so the manager can reject it).
-                    val bytes = context.contentResolver.openInputStream(uri)?.use { input ->
-                        val limit = 8 * 1024 * 1024 + 1
-                        val out = java.io.ByteArrayOutputStream()
-                        val buffer = ByteArray(16 * 1024)
-                        while (out.size() < limit) {
-                            val read = input.read(buffer, 0, minOf(buffer.size, limit - out.size()))
-                            if (read < 0) break
-                            out.write(buffer, 0, read)
+                    val target = File(context.cacheDir, "adinst-import.adinst")
+                    target.delete()
+                    var copied = 0L
+                    val opened = context.contentResolver.openInputStream(uri) ?: return@runCatching null
+                    opened.use { input ->
+                        FileOutputStream(target).use { output ->
+                            val buffer = ByteArray(64 * 1024)
+                            while (true) {
+                                val read = input.read(buffer)
+                                if (read < 0) break
+                                copied += read
+                                // One byte over the limit is enough for the installer to refuse it.
+                                if (copied > ZipAddonPlatform.MAX_PACKAGE_BYTES + 1) break
+                                output.write(buffer, 0, read)
+                            }
                         }
-                        out.toByteArray()
-                    } ?: return@runCatching null
+                    }
                     val name = context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
                         val column = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
                         if (column >= 0 && cursor.moveToFirst()) cursor.getString(column) else null
                     } ?: "addon.adinst"
-                    bytes to name
+                    if (copied > ZipAddonPlatform.MAX_PACKAGE_BYTES) {
+                        target.delete()
+                        null
+                    } else {
+                        target.absolutePath to name
+                    }
                 }.getOrNull()
             }
-            picked?.let { (bytes, name) -> latestOnPicked.value(bytes, name) }
+            picked?.let { (path, name) -> latestOnPicked.value(path, name) }
         }
     }
     return {

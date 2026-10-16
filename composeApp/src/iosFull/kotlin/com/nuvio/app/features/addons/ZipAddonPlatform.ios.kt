@@ -2,15 +2,17 @@ package com.nuvio.app.features.addons
 
 import androidx.compose.runtime.Composable
 
-// Installing addons from ZIP files is not implemented on iOS yet.
+// Installing addons from ADINST files is not implemented on iOS yet.
 internal object ZipAddonPlatform {
     val supported: Boolean = false
 
-    fun unzip(bytes: ByteArray): Map<String, ByteArray> = error("Not supported on iOS")
-    fun saveAddon(slug: String, files: Map<String, ByteArray>) = error("Not supported on iOS")
+    fun entryNames(path: String): Set<String> = error("Not supported on iOS")
+    fun readSmallFiles(path: String): Map<String, ByteArray> = error("Not supported on iOS")
+    fun installPackage(slug: String, path: String, prefix: String): Unit = error("Not supported on iOS")
     fun loadAddons(): Map<String, Map<String, ByteArray>> = emptyMap()
     fun deleteAddon(slug: String) = Unit
+    fun discard(path: String) = Unit
 }
 
 @Composable
-internal fun rememberZipAddonPicker(onPicked: (bytes: ByteArray, fileName: String) -> Unit): () -> Unit = {}
+internal fun rememberZipAddonPicker(onPicked: (path: String, fileName: String) -> Unit): () -> Unit = {}

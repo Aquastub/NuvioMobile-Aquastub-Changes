@@ -2468,6 +2468,12 @@
     <string name="addons_zip_success_title">Addon installed</string>
     <string name="addons_zip_success_message">installed</string>
     <string name="addons_zip_updated_message">updated</string>
+    <string name="addons_zip_invalid">This file is not a valid ADINST package.</string>
+    <string name="addons_zip_programs_inside">Bundled programs: %1$s</string>
+    <string name="addons_zip_permissions_title">This addon asks to:</string>
+    <string name="addons_permission_programs">Run the programs bundled in this addon on this device. They run with this app's access, so only install addons you trust.</string>
+    <string name="addons_permission_player_ui">Add buttons to the video player</string>
+    <string name="addons_permission_unknown">Use \"%1$s\"</string>
     <string name="addons_zip_wrong_extension">Choose an ADINST file (.adinst).</string>
     <string name="addons_zip_failure_title">Couldn't install addon</string>
 </resources>

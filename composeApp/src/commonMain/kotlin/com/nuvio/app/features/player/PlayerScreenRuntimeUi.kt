@@ -7,6 +7,11 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.unit.dp
+import com.nuvio.app.features.addons.LocalAddonUi
+import com.nuvio.app.features.addons.PlayerAddonContext
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.key
@@ -389,6 +394,28 @@ private fun PlayerScreenRuntime.RenderPlayerControls(displayedPositionMs: Long, 
             horizontalSafePadding = horizontalSafePadding,
             modifier = Modifier.fillMaxSize(),
         )
+    }
+
+    // Buttons added by addons (e.g. a DVR "Record" button). Drawn above the controls.
+    val addonPlayerActions = LocalAddonUi.playerActions
+    if (addonPlayerActions != null) {
+        AnimatedVisibility(
+            visible = controlsVisible && !playerControlsLocked && !isInPip,
+            enter = fadeIn(),
+            exit = fadeOut(),
+        ) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopEnd) {
+                addonPlayerActions(
+                    PlayerAddonContext(
+                        title = title,
+                        streamTitle = activeStreamTitle,
+                        providerName = activeProviderName,
+                        streamUrl = activeSourceUrl,
+                    ),
+                    Modifier.padding(top = 76.dp, end = horizontalSafePadding + 16.dp),
+                )
+            }
+        }
     }
 }
 

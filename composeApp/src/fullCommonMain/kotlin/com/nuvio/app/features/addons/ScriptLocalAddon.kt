@@ -31,6 +31,10 @@ internal class ScriptLocalAddon(
     val displayName: String,
     private val manifestJson: String,
     private val code: String,
+    override val permissions: Set<String> = emptySet(),
+    override val playerActions: List<AddonPlayerAction> = emptyList(),
+    /** Programs carried in the package: id -> (CPU type -> path inside the package). */
+    private val programs: Map<String, Map<String, String>> = emptyMap(),
 ) : LocalAddon {
     private val log = Logger.withTag("ScriptLocalAddon")
 
@@ -72,6 +76,7 @@ internal class ScriptLocalAddon(
             addModule(FetchBridge())
             addModule(UrlBridge())
             addModule(CryptoBridge())
+            addModule(ProgramBridge(slug = slug, permissions = permissions, programs = programs))
         }
 
         return try {
@@ -79,6 +84,7 @@ internal class ScriptLocalAddon(
                 hostRegistry.registerAll(this)
                 val polyfill = runCatching { JsRuntime.polyfillBytecode(this) }.getOrNull()
                 if (polyfill != null) evaluate<Any?>(polyfill) else evaluate<Any?>(JsBindings.staticPolyfillCode)
+                evaluate<Any?>(NUVIO_API_CODE)
                 evaluate<Any?>(wrapModule(code))
                 evaluate<Any?>(CALL_CODE)
                 deferred.await()
@@ -100,6 +106,19 @@ internal class ScriptLocalAddon(
     """.trimIndent()
 
     private companion object {
+        /** The `nuvio` object addons use to reach the app. Each call is checked against the addon's permissions. */
+        val NUVIO_API_CODE = """
+            globalThis.nuvio = {
+                programs: {
+                    available: async function () { return JSON.parse(await __program_call('available', '{}')); },
+                    exec: async function (spec) { return JSON.parse(await __program_call('exec', JSON.stringify(spec || {}))); },
+                    start: async function (spec) { return JSON.parse(await __program_call('start', JSON.stringify(spec || {}))); },
+                    stop: async function (id) { return JSON.parse(await __program_call('stop', JSON.stringify({ id: id }))); },
+                    list: async function () { return JSON.parse(await __program_call('list', '{}')); }
+                }
+            };
+        """.trimIndent()
+
         val CALL_CODE = """
             (async function() {
                 try {
