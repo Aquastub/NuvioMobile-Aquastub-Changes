@@ -11,6 +11,10 @@ internal object ZipAddonPlatform {
     fun installPackage(slug: String, path: String, prefix: String): Unit = error("Not supported on iOS")
     fun loadAddons(): Map<String, Map<String, ByteArray>> = emptyMap()
     fun deleteAddon(slug: String) = Unit
+    fun loadSettings(slug: String): Map<String, String> = emptyMap()
+    fun saveSettings(slug: String, values: Map<String, String>) = Unit
+    fun storageGet(slug: String, key: String): String? = null
+    fun storageSet(slug: String, key: String, value: String) = Unit
     fun discard(path: String) = Unit
 }
 

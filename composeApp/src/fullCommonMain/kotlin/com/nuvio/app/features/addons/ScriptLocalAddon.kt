@@ -35,6 +35,7 @@ internal class ScriptLocalAddon(
     override val playerActions: List<AddonPlayerAction> = emptyList(),
     /** Programs carried in the package: id -> (CPU type -> path inside the package). */
     private val programs: Map<String, Map<String, String>> = emptyMap(),
+    override val settings: List<AddonSetting> = emptyList(),
 ) : LocalAddon {
     private val log = Logger.withTag("ScriptLocalAddon")
 
@@ -53,6 +54,12 @@ internal class ScriptLocalAddon(
                 "type" to JsonPrimitive(request.type),
                 "id" to JsonPrimitive(request.id),
                 "extra" to JsonObject(request.extra.mapValues { JsonPrimitive(it.value) }),
+                // What the user typed on the addon's settings screen, only for the fields it declared.
+                "settings" to JsonObject(
+                    ZipAddonPlatform.loadSettings(slug)
+                        .filterKeys { key -> settings.any { it.key == key } }
+                        .mapValues { JsonPrimitive(it.value) },
+                ),
             ),
         ).toString()
 
@@ -77,6 +84,7 @@ internal class ScriptLocalAddon(
             addModule(UrlBridge())
             addModule(CryptoBridge())
             addModule(ProgramBridge(slug = slug, permissions = permissions, programs = programs))
+            addModule(StorageBridge(slug = slug))
         }
 
         return try {
@@ -109,6 +117,16 @@ internal class ScriptLocalAddon(
         /** The `nuvio` object addons use to reach the app. Each call is checked against the addon's permissions. */
         val NUVIO_API_CODE = """
             globalThis.nuvio = {
+                storage: {
+                    get: async function (key) {
+                        var r = JSON.parse(await __storage_call('get', String(key), ''));
+                        return r.ok ? r.value : null;
+                    },
+                    set: async function (key, value) {
+                        var r = JSON.parse(await __storage_call('set', String(key), String(value)));
+                        if (!r.ok) throw new Error(r.error || 'storage failed');
+                    }
+                },
                 programs: {
                     available: async function () { return JSON.parse(await __program_call('available', '{}')); },
                     exec: async function (spec) { return JSON.parse(await __program_call('exec', JSON.stringify(spec || {}))); },

@@ -30,6 +30,7 @@ internal object ZipAddonPlatform {
     const val MAX_PACKAGE_BYTES = 300L * 1024 * 1024
     private const val MAX_FILE_BYTES = 250L * 1024 * 1024
     private const val SMALL_FILE_BYTES = 2L * 1024 * 1024
+    private const val MAX_STORAGE_CHARS = 16 * 1024 * 1024
 
     private var root: File? = null
     private var dataRoot: File? = null
@@ -138,6 +139,36 @@ internal object ZipAddonPlatform {
         val base = checkNotNull(dataRoot) { "Addon storage is not initialised" }
         require(slug.matches(Regex("[a-z0-9-]+"))) { "Invalid addon id" }
         return File(base, slug).also { it.mkdirs() }
+    }
+
+    /** The user's values for the addon's settings (key -> text). */
+    fun loadSettings(slug: String): Map<String, String> = runCatching {
+        val file = File(dataDir(slug), "settings.json")
+        if (!file.isFile) return@runCatching emptyMap<String, String>()
+        val json = org.json.JSONObject(file.readText())
+        json.keys().asSequence().associateWith { json.optString(it, "") }
+    }.getOrDefault(emptyMap())
+
+    fun saveSettings(slug: String, values: Map<String, String>) {
+        val json = org.json.JSONObject()
+        values.forEach { (key, value) -> json.put(key, value) }
+        File(dataDir(slug), "settings.json").writeText(json.toString())
+    }
+
+    /** nuvio.storage: a small private key/value store per addon (cached lists, state...). */
+    fun storageGet(slug: String, key: String): String? {
+        val file = storageFile(slug, key)
+        return if (file.isFile) file.readText() else null
+    }
+
+    fun storageSet(slug: String, key: String, value: String) {
+        require(value.length <= MAX_STORAGE_CHARS) { "Value is too large" }
+        storageFile(slug, key).writeText(value)
+    }
+
+    private fun storageFile(slug: String, key: String): File {
+        require(key.matches(Regex("[A-Za-z0-9._-]{1,64}"))) { "Invalid storage key" }
+        return File(File(dataDir(slug), "storage").also { it.mkdirs() }, key)
     }
 
     fun discard(path: String) {

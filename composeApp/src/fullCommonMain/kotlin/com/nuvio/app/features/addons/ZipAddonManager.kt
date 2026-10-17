@@ -26,6 +26,9 @@ internal object ZipAddonManager {
 
     private const val MAX_SCRIPT_BYTES = 2 * 1024 * 1024
     private const val MAX_PLAYER_ACTIONS = 4
+    private const val MAX_SETTINGS = 12
+    private val SETTING_KEY_REGEX = Regex("[A-Za-z0-9_]{1,32}")
+    private val SETTING_TYPES = setOf("text", "url", "password", "number")
     private val PROGRAM_ID_REGEX = Regex("[A-Za-z0-9._-]{1,32}")
     private const val DEFAULT_MAIN = "index.js"
 
@@ -122,6 +125,7 @@ internal object ZipAddonManager {
             code = script.decodeToString(),
             permissions = permissions,
             programs = if (PERMISSION_PROGRAMS in permissions) readPrograms(manifest) else emptyMap(),
+            settings = readSettings(manifest),
             // Buttons only count when the addon asked for (and the user approved) the player permission.
             playerActions = if (PERMISSION_PLAYER_UI in permissions) readPlayerActions(manifest) else emptyList(),
         )
@@ -145,6 +149,19 @@ internal object ZipAddonManager {
                 AddonPlayerAction(id = id, label = label.take(24), match = obj.string("match")?.ifBlank { null })
             }
             .take(MAX_PLAYER_ACTIONS)
+
+    /** `"nuvio": { "settings": [{ "key": "playlistUrl", "label": "Playlist URL", "type": "url" }] }` */
+    private fun readSettings(manifest: JsonObject): List<AddonSetting> =
+        ((manifest["nuvio"] as? JsonObject)?.get("settings") as? JsonArray)
+            .orEmpty()
+            .mapNotNull { element ->
+                val obj = element as? JsonObject ?: return@mapNotNull null
+                val key = obj.string("key")?.trim()?.takeIf { SETTING_KEY_REGEX.matches(it) } ?: return@mapNotNull null
+                val label = obj.string("label")?.trim()?.ifBlank { null } ?: key
+                val type = obj.string("type")?.lowercase()?.takeIf { it in SETTING_TYPES } ?: "text"
+                AddonSetting(key = key, label = label.take(60), type = type, hint = obj.string("hint")?.take(160))
+            }
+            .take(MAX_SETTINGS)
 
     /** What the confirmation dialog shows before anything is installed. */
     data class Inspection(val name: String, val permissions: Set<String>, val programs: List<String>)

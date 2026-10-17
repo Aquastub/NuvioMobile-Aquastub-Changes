@@ -580,6 +580,13 @@ private fun InstalledAddonCard(
                 }
             }
         }
+
+        if (addon.manifestUrl.isLocalAddonUrl()) {
+            LocalAddonUi.settingsContent?.let { settingsContent ->
+                Spacer(modifier = Modifier.height(14.dp))
+                settingsContent(addon.manifestUrl)
+            }
+        }
     }
 }
 

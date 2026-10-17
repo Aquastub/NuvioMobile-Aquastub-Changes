@@ -8,5 +8,6 @@ internal fun registerFlavorLocalAddons(context: Context) {
     AddonProgramPlatform.initialize(context)
     ZipAddonManager.loadInstalled()
     LocalAddonUi.importContent = { ZipAddonImportSection() }
+    LocalAddonUi.settingsContent = { manifestUrl -> AddonSettingsEntry(manifestUrl) }
     LocalAddonUi.playerActions = { playerContext, modifier -> AddonPlayerActions(playerContext, modifier) }
 }

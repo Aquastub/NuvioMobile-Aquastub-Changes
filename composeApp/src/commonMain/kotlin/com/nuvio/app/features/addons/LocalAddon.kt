@@ -28,12 +28,18 @@ interface LocalAddon {
     /** Buttons this addon adds to the video player (needs the "playerUi" permission). */
     val playerActions: List<AddonPlayerAction> get() = emptyList()
 
+    /** Fields the user can fill in for this addon (a playlist link, a login...). Passed back as request.settings. */
+    val settings: List<AddonSetting> get() = emptyList()
+
     /** True for addons the user installed (e.g. from a ZIP) and may remove again. */
     val removable: Boolean get() = false
 
     /** Called once when a [removable] addon is removed, to delete its files. */
     fun onRemoved() = Unit
 }
+
+/** One field of an addon's settings screen. [type] is "text", "url", "password" or "number". */
+data class AddonSetting(val key: String, val label: String, val type: String = "text", val hint: String? = null)
 
 /** A button an addon adds to the player. [match] is an optional regex tested against the stream URL. */
 data class AddonPlayerAction(val id: String, val label: String, val match: String? = null)
@@ -123,6 +129,9 @@ private fun String.percentDecode(): String {
 /** Lets a build flavor add UI: the Addons screen's install card, and addon buttons in the player. */
 object LocalAddonUi {
     var importContent: (@androidx.compose.runtime.Composable () -> Unit)? = null
+
+    /** Draws a "Settings" entry on an addon's card (receives the addon's manifest URL). */
+    var settingsContent: (@androidx.compose.runtime.Composable (String) -> Unit)? = null
 
     /** Draws the addon-provided buttons for the player. Receives what is playing and a modifier for placement. */
     var playerActions: (@androidx.compose.runtime.Composable (PlayerAddonContext, androidx.compose.ui.Modifier) -> Unit)? = null

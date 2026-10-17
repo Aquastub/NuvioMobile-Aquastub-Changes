@@ -2474,6 +2474,8 @@
     <string name="addons_permission_programs">Run the programs bundled in this addon on this device. They run with this app's access, so only install addons you trust.</string>
     <string name="addons_permission_player_ui">Add buttons to the video player</string>
     <string name="addons_permission_unknown">Use \"%1$s\"</string>
+    <string name="addons_settings_button">Settings</string>
+    <string name="addons_settings_title">%1$s settings</string>
     <string name="addons_zip_wrong_extension">Choose an ADINST file (.adinst).</string>
     <string name="addons_zip_failure_title">Couldn't install addon</string>
 </resources>
