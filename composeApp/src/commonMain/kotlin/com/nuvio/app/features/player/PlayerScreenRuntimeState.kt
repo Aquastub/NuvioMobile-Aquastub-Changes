@@ -131,6 +131,9 @@ internal class PlayerScreenRuntime(
     var activeInitialPositionMs by mutableStateOf(initialPositionMs)
     var activeInitialProgressFraction by mutableStateOf(initialProgressFraction)
     var shouldPlay by mutableStateOf(true)
+    // [adult swim] pre-roll state: the original episode is restored when the bumper ends or fails.
+    var adultSwimPrerollActive by mutableStateOf(false)
+    var adultSwimPrerollEpisodeUrl by mutableStateOf<String?>(null)
     var resizeMode by mutableStateOf(playerSettingsUiState.resizeMode)
     var layoutSize by mutableStateOf(IntSize.Zero)
     var playbackSnapshot by mutableStateOf(PlayerPlaybackSnapshot())

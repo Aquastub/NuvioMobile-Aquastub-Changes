@@ -14,6 +14,7 @@ import com.nuvio.app.features.addons.LocalAddonUi
 import com.nuvio.app.features.addons.PlayerAddonContext
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -37,6 +38,9 @@ import org.jetbrains.compose.resources.stringResource
 @Composable
 internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
     val runtime = this
+    LaunchedEffect(sourceUrl, parentMetaType) {
+        tryStartAdultSwimPreroll()
+    }
     val isInPip = rememberIsInPictureInPicture()
     val displayedPositionMs = scrubbingPositionMs ?: playbackSnapshot.positionMs
     val isEpisode = activeSeasonNumber != null && activeEpisodeNumber != null
@@ -197,12 +201,20 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
                         refreshAudioTracksIfChanged()
                         if (!snapshot.isLoading) initialLoadCompleted = true
                         if (snapshot.isEnded) {
-                            shouldPlay = false
-                            controlsVisible = !playerControlsLocked
+                            if (adultSwimPrerollActive) {
+                                finishAdultSwimPreroll()
+                            } else {
+                                shouldPlay = false
+                                controlsVisible = !playerControlsLocked
+                            }
                         }
                     },
                     onError = { message ->
                         if (!active.value || playbackKey != activePlaybackKey) return@PlatformPlayerSurface
+                        if (adultSwimPrerollActive) {
+                            finishAdultSwimPreroll()
+                            return@PlatformPlayerSurface
+                        }
                         if (message != null && tryRefreshCredentialedSourceAfterError(message)) {
                             return@PlatformPlayerSurface
                         }
