@@ -81,6 +81,14 @@ android {
         versionCode = releaseAppVersionCode
         versionName = releaseAppVersionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Chaquopy (Python) needs to know which CPU types to package. Release builds already say so through
+        // the ABI splits below (and Android refuses both at once); every other build, such as debug, lists them here.
+        if (!buildsReleaseApks) {
+            ndk {
+                abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+            }
+        }
     }
 
     flavorDimensions += "distribution"

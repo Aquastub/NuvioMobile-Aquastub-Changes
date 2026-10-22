@@ -109,8 +109,6 @@ internal object AutomaticSubtitleSync {
         onNoSubtitleTracks: () -> Unit = {},
         onAnalysisOutcome: ((AutoSyncAnalysisOutcome) -> Unit)? = null,
         sourceHeaders: Map<String, String> = emptyMap(),
-        /** False when the player does not feed [EmbeddedSubtitleCueStore] (libmpv): indexed references only. */
-        allowLiveReference: Boolean = true,
     ): AutoSyncResolvedTimeline? {
         Unit
         val aggressiveMode = AutoSyncPreferencesRepository.aggressiveMode.value
@@ -428,7 +426,7 @@ internal object AutomaticSubtitleSync {
                 }
             }
 
-            if (referenceTracks.isEmpty() && allowLiveReference) {
+            if (referenceTracks.isEmpty()) {
                 val useSparseLiveReference =
                     indexedTimeline?.source == "matroska-cues-no-subtitle-entries"
                 val liveSelection = awaitNearCompleteLiveReferences(

@@ -25,7 +25,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Lifecycle
@@ -67,9 +66,7 @@ import androidx.media3.ui.SubtitleView
 import androidx.media3.ui.CaptionStyleCompat
 import com.nuvio.app.features.autosync.AutoSyncExtractorsFactory
 import com.nuvio.app.features.autosync.AutoSyncPreferencesRepository
-import com.nuvio.app.features.autosync.LIBMPV_AUTOSYNC_FILE_PREFIX
 import com.nuvio.app.features.autosync.rememberAutoSyncCoordinator
-import com.nuvio.app.features.autosync.rememberLibmpvAutoSyncCoordinator
 import com.nuvio.app.R
 import com.nuvio.app.features.streams.normalizeStreamType
 import `is`.xyz.mpv.BaseMPVView
@@ -188,7 +185,6 @@ actual fun PlatformPlayerSurface(
                 videoOutput = playerSettings.androidLibmpvVideoOutput,
                 hardwareDecodingEnabled = playerSettings.androidLibmpvHardwareDecodingEnabled,
                 yuv420pEnabled = playerSettings.androidLibmpvYuv420pEnabled,
-                preferredSubtitleLanguage = playerSettings.preferredSubtitleLanguage,
                 onControllerReady = onControllerReady,
                 onSnapshot = onSnapshot,
                 onError = onError,
@@ -534,11 +530,7 @@ private fun ExoPlayerSurface(
     val pendingAudioTrackSelection = remember { mutableListOf<TrackSelectionSnapshot>() }
     var subtitleSelectionJob by remember { mutableStateOf<Job?>(null) }
     val isInPip = rememberIsInPictureInPicture()
-    // Player size outside PiP, so PiP subtitles keep the full-screen size relative to the video.
-    var playerSizeOutsidePip by remember { mutableStateOf(IntSize.Zero) }
-    val pipVideoHeightPx by rememberUpdatedState(
-        if (isInPip) displayedVideoHeightPx(playerSizeOutsidePip, exoPlayer.videoSize) ?: 0f else null,
-    )
+    val pipSubtitleScale by rememberUpdatedState(if (isInPip) 0.4f else 1.0f)
 
     val sidecarController = remember(exoPlayer, coroutineScope) {
         SidecarSubtitleController(
@@ -1005,7 +997,7 @@ private fun ExoPlayerSurface(
 
                 override fun applySubtitleStyle(style: SubtitleStyleState) {
                     currentSubtitleStyle = style
-                    playerViewRef?.applySubtitleStyle(style, pipVideoHeightPx)
+                    playerViewRef?.applySubtitleStyle(style, pipSubtitleScale)
                 }
 
                 override fun applySubtitlePreferences(
@@ -1051,21 +1043,12 @@ private fun ExoPlayerSurface(
                 setShutterBackgroundColor(android.graphics.Color.BLACK)
                 playerViewRef = this
                 sidecarController.bindSubtitleView(this.subtitleView)
-                subtitleView?.addOnLayoutChangeListener { view, _, _, _, _, _, _, _, _ ->
-                    val inPip = Build.VERSION.SDK_INT >= Build.VERSION_CODES.N &&
-                        context.findActivity()?.isInPictureInPictureMode == true
-                    val size = IntSize(
-                        view.width - view.paddingLeft - view.paddingRight,
-                        view.height - view.paddingTop - view.paddingBottom,
-                    )
-                    if (!inPip && size.width > 0 && size.height > 0) playerSizeOutsidePip = size
-                }
                 syncLibassOverlay(
                     player = exoPlayer,
                     enabled = useLibass,
                     renderType = libassRenderType,
                 )
-                applySubtitleStyle(currentSubtitleStyle, pipVideoHeightPx)
+                applySubtitleStyle(currentSubtitleStyle, pipSubtitleScale)
             }
         },
         update = { playerView ->
@@ -1080,7 +1063,7 @@ private fun ExoPlayerSurface(
                 enabled = useLibass,
                 renderType = libassRenderType,
             )
-            playerView.applySubtitleStyle(currentSubtitleStyle, pipVideoHeightPx)
+            playerView.applySubtitleStyle(currentSubtitleStyle, pipSubtitleScale)
         },
     )
 }
@@ -1097,7 +1080,6 @@ private fun LibmpvPlayerSurface(
     videoOutput: AndroidLibmpvVideoOutput,
     hardwareDecodingEnabled: Boolean,
     yuv420pEnabled: Boolean,
-    preferredSubtitleLanguage: String?,
     onControllerReady: (PlayerEngineController) -> Unit,
     onSnapshot: (PlayerPlaybackSnapshot) -> Unit,
     onError: (String?) -> Unit,
@@ -1113,13 +1095,6 @@ private fun LibmpvPlayerSurface(
     val sanitizedSourceHeaders = remember(sourceHeaders) {
         sanitizePlaybackHeaders(sourceHeaders)
     }
-    val autoSyncCoordinator = rememberLibmpvAutoSyncCoordinator( // AutoSync hook
-        scope = coroutineScope,
-        sourceUrl = sourceUrl,
-        sourceHeaders = sanitizedSourceHeaders,
-        externalSubtitles = externalSubtitles,
-        preferredSubtitleLanguage = preferredSubtitleLanguage,
-    )
     var playerViewRef by remember { mutableStateOf<NuvioLibmpvView?>(null) }
     val nowPlayingController = remember(context, playerViewRef) {
         playerViewRef?.let { view ->
@@ -1346,12 +1321,7 @@ private fun LibmpvPlayerSurface(
 
     LaunchedEffect(playerViewRef, sourceUrl, sourceAudioUrl, sanitizedSourceHeaders, externalSubtitles) {
         val view = playerViewRef ?: return@LaunchedEffect
-        onControllerReady(
-            autoSyncCoordinator.wrap( // AutoSync hook
-                view.controller(context, nowPlayingController),
-                view::replaceExternalSubtitle,
-            ),
-        )
+        onControllerReady(view.controller(context, nowPlayingController))
     }
 
     LaunchedEffect(playerViewRef) {
@@ -1768,39 +1738,6 @@ private class NuvioLibmpvView(
             }
         }
 
-    /**
-     * Loads the local subtitle file at [path] in place of the external track loaded from
-     * [replacedUrl], under that track's label and language. Earlier AutoSync copies are dropped too.
-     */
-    fun replaceExternalSubtitle(replacedUrl: String, path: String) {
-        executeMpv {
-            fun externalSubtitleTracks() = mpv.getPropertyNode("track-list")?.asArray()?.toList().orEmpty()
-                .filter { node -> node.nodeString("type") == "sub" && node.nodeBoolean("external") == true }
-
-            val replacedSource = replacedUrl.toMpvSource()
-            val earlierCopyPrefix = "${path.substringBeforeLast('/')}/$LIBMPV_AUTOSYNC_FILE_PREFIX"
-            val replaced = externalSubtitleTracks()
-                .lastOrNull { node -> node.nodeString("external-filename") == replacedSource }
-            val title = replaced?.let { node ->
-                node.nodeString("title") ?: node.nodeString("external-filename")?.substringAfterLast('/')
-            }
-            val language = replaced?.nodeString("lang")
-            when {
-                title != null && language != null -> mpv.command("sub-add", path, "cached", title, language)
-                title != null -> mpv.command("sub-add", path, "cached", title)
-                else -> mpv.command("sub-add", path, "cached")
-            }
-            externalSubtitleTracks()
-                .filter { node ->
-                    val filename = node.nodeString("external-filename") ?: return@filter false
-                    filename != path &&
-                        (filename == replacedSource || filename.startsWith(earlierCopyPrefix))
-                }
-                .mapNotNull { node -> node.nodeInt("id") }
-                .forEach { id -> mpv.command("sub-remove", id.toString()) }
-        }
-    }
-
     fun refreshTracks(context: Context) {
         executeMpv {
             latestAudioTracks = extractLibmpvTracks(context, type = "audio")
@@ -2128,20 +2065,7 @@ private fun PlayerView.releaseLibassOverlay() {
     setTag(R.id.libass_overlay_bound_player, null)
 }
 
-private const val PIP_FALLBACK_SUBTITLE_SCALE = 0.4f
-
-/** Height of a fitted video inside [viewSize], or null if either size is unknown. */
-private fun displayedVideoHeightPx(viewSize: IntSize, videoSize: VideoSize): Float? {
-    if (viewSize.width <= 0 || viewSize.height <= 0 || videoSize.width <= 0 || videoSize.height <= 0) return null
-    val videoAspect = videoSize.width * videoSize.pixelWidthHeightRatio / videoSize.height
-    return minOf(viewSize.height.toFloat(), viewSize.width / videoAspect)
-}
-
-/**
- * [pipVideoHeightPx] is null outside PiP. In PiP it is the video height outside PiP (0 if unknown),
- * so subtitles shrink and grow with the video exactly as it is shown full screen.
- */
-private fun PlayerView.applySubtitleStyle(style: SubtitleStyleState, pipVideoHeightPx: Float? = null) {
+private fun PlayerView.applySubtitleStyle(style: SubtitleStyleState, pipScale: Float = 1.0f) {
     subtitleView?.apply {
         val baseBottomPaddingFraction = SubtitleView.DEFAULT_BOTTOM_PADDING_FRACTION * 2f / 3f
         val offsetFraction = (style.bottomOffset / 1000f).coerceIn(0f, 0.2f)
@@ -2160,17 +2084,7 @@ private fun PlayerView.applySubtitleStyle(style: SubtitleStyleState, pipVideoHei
                 if (style.bold) Typeface.DEFAULT_BOLD else Typeface.DEFAULT,
             )
         )
-        val fontSizeSp = style.fontSizeSp.toFloat()
-        when {
-            pipVideoHeightPx == null -> setFixedTextSize(TypedValue.COMPLEX_UNIT_SP, fontSizeSp)
-            // The PiP window matches the video, so a fraction of its height follows window resizes.
-            pipVideoHeightPx > 0f -> setFractionalTextSize(
-                TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, fontSizeSp, resources.displayMetrics) /
-                    pipVideoHeightPx,
-            )
-            // Full-screen size unknown: fall back to a fixed PiP scale.
-            else -> setFixedTextSize(TypedValue.COMPLEX_UNIT_SP, fontSizeSp * PIP_FALLBACK_SUBTITLE_SCALE)
-        }
+        setFixedTextSize(TypedValue.COMPLEX_UNIT_SP, style.fontSizeSp.toFloat() * pipScale)
     }
 }
 

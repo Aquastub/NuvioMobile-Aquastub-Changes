@@ -564,7 +564,7 @@ private fun PlaybackSettingsSection(
                     SettingsGroupDivider(isTablet = isTablet)
                     AutoSyncPlaybackSettingsRows( // AutoSync hook
                         isTablet = isTablet,
-                        enabled = otherSubtitleOptionsEnabled,
+                        enabled = otherSubtitleOptionsEnabled && androidPlaybackEngine != AndroidPlaybackEngine.Libmpv,
                         preferredSubtitleLanguage = preferredSubtitleLanguage,
                     )
                 }
