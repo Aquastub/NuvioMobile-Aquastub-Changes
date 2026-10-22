@@ -26,7 +26,7 @@ import java.util.zip.ZipFile
 internal object ZipAddonPlatform {
     private const val DIRECTORY = "local_addons"
     private const val DATA_DIRECTORY = "local_addon_data"
-    private const val MAX_ENTRIES = 500
+    private const val MAX_ENTRIES = 5000
     const val MAX_PACKAGE_BYTES = 300L * 1024 * 1024
     private const val MAX_FILE_BYTES = 250L * 1024 * 1024
     private const val SMALL_FILE_BYTES = 2L * 1024 * 1024
@@ -59,7 +59,9 @@ internal object ZipAddonPlatform {
         val files = LinkedHashMap<String, ByteArray>()
         for (entry in zip.entries()) {
             if (entry.isDirectory || entry.size !in 0..SMALL_FILE_BYTES) continue
-            files[safeName(entry.name)] = readBounded(zip, entry, SMALL_FILE_BYTES)
+            val name = safeName(entry.name)
+            if (!isScriptOrManifest(name)) continue // libraries (hundreds of .py files) are only unpacked
+            files[name] = readBounded(zip, entry, SMALL_FILE_BYTES)
         }
         files
     }
@@ -117,7 +119,7 @@ internal object ZipAddonPlatform {
         val base = root ?: return emptyMap()
         return base.listFiles { file -> file.isDirectory && !file.name.startsWith(".") }.orEmpty().associate { dir ->
             dir.name to dir.walkTopDown()
-                .filter { it.isFile && it.length() <= SMALL_FILE_BYTES }
+                .filter { it.isFile && it.length() <= SMALL_FILE_BYTES && isScriptOrManifest(it.name) }
                 .associate { it.relativeTo(dir).invariantSeparatorsPath to it.readBytes() }
         }
     }
@@ -190,6 +192,9 @@ internal object ZipAddonPlatform {
         }
         return out.toByteArray()
     }
+
+    /** Only the manifest and the addon's JavaScript are needed in memory; everything else stays on disk. */
+    private fun isScriptOrManifest(name: String): Boolean = name.endsWith(".json") || name.endsWith(".js")
 
     /** Rejects absolute paths and "..", so a package cannot write outside its addon folder. */
     private fun safeName(raw: String): String {

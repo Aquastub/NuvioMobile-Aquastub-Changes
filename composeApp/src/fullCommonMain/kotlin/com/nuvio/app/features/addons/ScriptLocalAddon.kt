@@ -127,6 +127,13 @@ internal class ScriptLocalAddon(
                         if (!r.ok) throw new Error(r.error || 'storage failed');
                     }
                 },
+                python: {
+                    available: async function () { return JSON.parse(await __program_call('python.available', '{}')); },
+                    run: async function (spec) { return JSON.parse(await __program_call('python.run', JSON.stringify(spec || {}))); },
+                    start: async function (spec) { return JSON.parse(await __program_call('python.start', JSON.stringify(spec || {}))); },
+                    stop: async function (id) { return JSON.parse(await __program_call('stop', JSON.stringify({ id: id }))); },
+                    list: async function () { return JSON.parse(await __program_call('list', '{}')); }
+                },
                 programs: {
                     available: async function () { return JSON.parse(await __program_call('available', '{}')); },
                     exec: async function (spec) { return JSON.parse(await __program_call('exec', JSON.stringify(spec || {}))); },

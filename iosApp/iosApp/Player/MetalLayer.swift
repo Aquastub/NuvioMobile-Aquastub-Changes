@@ -36,7 +36,8 @@ class MetalLayer: CAMetalLayer {
         if observer != nil { presentationObserver = nil }
         pictureInPictureLock.unlock()
         if let observer {
-            let notify: (TimeInterval) -> Void = { [weak self] time in
+            drawable.addPresentedHandler { [weak self] presented in
+                let time = presented.presentedTime
                 DispatchQueue.main.async { [weak self] in
                     guard let self else { return }
                     self.pictureInPictureLock.lock()
@@ -45,11 +46,6 @@ class MetalLayer: CAMetalLayer {
                     if current { observer.callback(time) }
                 }
             }
-#if targetEnvironment(simulator)
-            notify(CACurrentMediaTime())
-#else
-            drawable.addPresentedHandler { notify($0.presentedTime) }
-#endif
         }
         return drawable
     }

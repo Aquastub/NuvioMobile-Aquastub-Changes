@@ -20,7 +20,7 @@ import com.nuvio.app.features.addons.registerFlavorLocalAddons
  * image request. Without this, Coil's auto-init ContentProvider creates the singleton
  * before MainActivity.onCreate, and interceptors registered later are ignored.
  */
-class NuvioApplication : Application(), SingletonImageLoader.Factory {
+open class NuvioApplication : Application(), SingletonImageLoader.Factory {
 
     override fun onCreate() {
         super.onCreate()

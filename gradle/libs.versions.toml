@@ -1,5 +1,6 @@
 [versions]
 agp = "9.2.0"
+chaquopy = "17.1.0"
 android-compileSdk = "37"
 android-compileSdkMinor = "0"
 android-minSdk = "24"
@@ -98,6 +99,7 @@ sentry-android = { module = "io.sentry:sentry-android", version.ref = "sentry" }
 
 [plugins]
 androidApplication = { id = "com.android.application", version.ref = "agp" }
+chaquopy = { id = "com.chaquo.python", version.ref = "chaquopy" }
 androidLibrary = { id = "com.android.library", version.ref = "agp" }
 androidKotlinMultiplatformLibrary = { id = "com.android.kotlin.multiplatform.library", version.ref = "agp" }
 composeMultiplatform = { id = "org.jetbrains.compose", version.ref = "composeMultiplatform" }

@@ -26,7 +26,6 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -48,7 +47,6 @@ import com.nuvio.app.features.party.PartyAction
 import com.nuvio.app.core.sync.AppForegroundMonitor
 import com.nuvio.app.core.sync.AppVisibility
 import com.nuvio.app.core.ui.NuvioToastController
-import com.nuvio.app.features.party.PartyChat
 import com.nuvio.app.features.party.PartyCorrection
 import com.nuvio.app.features.party.PartyEvent
 import com.nuvio.app.features.party.PartyMedia
@@ -61,7 +59,6 @@ import com.nuvio.app.features.party.PartySource
 import com.nuvio.app.features.party.PartyStream
 import com.nuvio.app.features.party.isShareableStreamUrl
 import com.nuvio.app.features.party.PartySync
-import com.nuvio.app.features.party.UnreadBadge
 import com.nuvio.app.features.party.messageRes
 import com.nuvio.app.features.party.partyMediaKey
 import kotlinx.coroutines.delay
@@ -100,12 +97,6 @@ internal fun PlayerScreenRuntime.partyBlocksControl(): Boolean {
     if (!isPartyControlLocked) return false
     scope.launch { showGestureMessage(getString(Res.string.party_host_only_note)) }
     return true
-}
-
-internal fun PlayerScreenRuntime.openPartyPanel() {
-    if (PartyChat.unread.value > 0) showPartyChat = true
-    showPartyPanel = true
-    controlsVisible = false
 }
 
 internal fun PlayerScreenRuntime.toggleOwnPlayback() {
@@ -236,48 +227,16 @@ private fun PlayerScreenRuntime.handlePartyMediaChange(media: PartyMedia) {
             return
         }
     }
-    showPartyChat = false
     showPartyPanel = true
 }
 
 @Composable
 internal fun PlayerScreenRuntime.BindPartyEffects() {
-    // This binding belongs to the player session, including background PiP.
-    val partyState by PartyRepository.state.collectAsState()
+    val partyState by PartyRepository.state.collectAsStateWithLifecycle()
     val partyId = partyState.party?.id
     val key = partyKey
     val sharing = partyState.party?.let { it.isHost && it.sharing } == true
     val sharedStream = if (sharing) currentPartyStream() else null
-
-    DisposableEffect(playerController) {
-        val source = playerController as? PlayerSystemControlSource
-        // System controls follow the same party rules as the in-player controls.
-        source?.setSystemControlHandler(object : PlayerSystemControlHandler {
-            override fun handleSetPlaying(playing: Boolean): Boolean {
-                if (!isPartySynced) return false
-                setPlaybackPlaying(playing)
-                return true
-            }
-
-            override fun handleSeekTo(positionMs: Long): Boolean {
-                if (!isPartySynced) return false
-                val targetMs = if (isPartyControlLocked) ownSeekTarget(positionMs) else positionMs
-                if (targetMs != null) {
-                    playerController?.seekTo(targetMs)
-                    scheduleProgressSyncAfterSeek()
-                    publishPartyPlayback(positionMs = targetMs)
-                }
-                return true
-            }
-
-            override fun handleSeekBy(offsetMs: Long): Boolean {
-                if (!isPartySynced) return false
-                this@BindPartyEffects.seekBy(offsetMs)
-                return true
-            }
-        })
-        onDispose { source?.setSystemControlHandler(null) }
-    }
 
     LaunchedEffect(sharing, sharedStream) {
         if (sharing) PartyRepository.shareStream(sharedStream)
@@ -326,8 +285,6 @@ internal fun PlayerScreenRuntime.BindPartyEffects() {
             delay(PARTY_TICK)
             val party = PartyRepository.state.value.party ?: break
             val snapshot = playbackSnapshot
-            val awayFromPlayback = partyAppInBackground &&
-                (playerController as? PlayerSystemControlSource)?.keepsPlaybackInBackground != true
             val resumedFromBackground = wasInBackground && !partyAppInBackground
             wasInBackground = partyAppInBackground
             if (resumedFromBackground) lastSeq = null
@@ -335,7 +292,7 @@ internal fun PlayerScreenRuntime.BindPartyEffects() {
                 ?.takeIf { partyBehind && party.media.key == partyKey }
                 ?.let { PartySync.expectedPositionMs(it, PartyRepository.nowMs(), snapshot.durationMs) - currentPlaybackPositionMs() }
             val status = when {
-                errorMessage != null || awayFromPlayback -> PartyMemberStatus.Browsing
+                errorMessage != null || partyAppInBackground -> PartyMemberStatus.Browsing
                 behindGap != null -> PartyMemberStatus.Behind
                 !initialLoadCompleted -> PartyMemberStatus.Loading
                 snapshot.isLoading && !snapshot.isEnded -> {
@@ -358,7 +315,7 @@ internal fun PlayerScreenRuntime.BindPartyEffects() {
             }
 
             val controller = playerController
-            if (party.media.key != partyKey || controller == null || errorMessage != null || awayFromPlayback) {
+            if (party.media.key != partyKey || controller == null || errorMessage != null || partyAppInBackground) {
                 clearPartyNudge()
                 continue
             }
@@ -500,7 +457,6 @@ private fun PlayerScreenRuntime.clearPartyNudge(playback: PartyPlayback? = Party
 internal fun BoxScope.RenderParty(runtime: PlayerScreenRuntime) {
     val partyState by PartyRepository.state.collectAsStateWithLifecycle()
     val playback by PartyRepository.playback.collectAsStateWithLifecycle()
-    val unread by PartyChat.unread.collectAsStateWithLifecycle()
     var notice by remember { mutableStateOf<PartyNotice?>(null) }
     LaunchedEffect(Unit) {
         PartyRepository.notices.collectLatest { next ->
@@ -522,7 +478,6 @@ internal fun BoxScope.RenderParty(runtime: PlayerScreenRuntime) {
                 visible = (controlsVisible || waitingNames.isNotEmpty() || !party.connected || noticeText != null || (partyBehind && !shouldPlay)) &&
                     !playerControlsLocked && !showPartyPanel,
                 members = party.members,
-                unread = unread,
                 message = when {
                     !party.connected -> stringResource(Res.string.party_reconnecting)
                     waitingNames.isNotEmpty() -> stringResource(Res.string.party_waiting_for, waitingNames.joinToString())
@@ -532,7 +487,7 @@ internal fun BoxScope.RenderParty(runtime: PlayerScreenRuntime) {
                     partyBehind -> partyBehindMs?.let { stringResource(Res.string.party_behind, formatPlaybackTime(it)) }
                     else -> null
                 },
-                onClick = { openPartyPanel() },
+                onClick = { showPartyPanel = true },
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .windowInsetsPadding(WindowInsets.safeContent.only(WindowInsetsSides.Top))
@@ -542,8 +497,6 @@ internal fun BoxScope.RenderParty(runtime: PlayerScreenRuntime) {
         PartyPanel(
             visible = showPartyPanel,
             state = partyState,
-            showChat = showPartyChat,
-            onShowChatChange = { showPartyChat = it },
             playerMedia = currentPartyMedia(),
             isSupported = PartyRepository.available.collectAsStateWithLifecycle().value,
             canStart = PartyRepository.canUse,
@@ -597,7 +550,6 @@ private fun ActiveParty.waitingNames(): List<String> =
 private fun PartyStatusPill(
     visible: Boolean,
     members: List<PartyMember>,
-    unread: Int,
     message: String?,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -622,7 +574,6 @@ private fun PartyStatusPill(
                 size = 28.dp,
                 ringColor = Color.Black.copy(alpha = 0.5f),
             )
-            UnreadBadge(count = unread, icon = true)
             AnimatedContent(
                 targetState = message,
                 transitionSpec = {

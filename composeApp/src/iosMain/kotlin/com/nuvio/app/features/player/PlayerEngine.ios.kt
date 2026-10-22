@@ -82,14 +82,7 @@ actual fun PlatformPlayerSurface(
     }
 
     val controller = remember(bridge) {
-        object : PlayerEngineController, PlayerSystemControlSource {
-            override val keepsPlaybackInBackground: Boolean
-                get() = bridge.getKeepsPlaybackInBackground()
-
-            override fun setSystemControlHandler(handler: PlayerSystemControlHandler?) {
-                bridge.setSystemControlHandler(handler)
-            }
-
+        object : PlayerEngineController {
             override fun play() {
                 bridge.play()
             }

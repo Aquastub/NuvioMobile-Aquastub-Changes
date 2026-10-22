@@ -10,6 +10,10 @@ import com.nuvio.app.features.addons.program.AddonProgramService
 import com.nuvio.app.features.addons.program.AddonProgramState
 import com.nuvio.app.features.addons.program.HlsRecorder
 import com.nuvio.app.features.addons.program.RawStreamRecorder
+import com.nuvio.app.features.addons.python.PythonHost
+import com.nuvio.app.features.addons.python.PythonRunRequest
+import com.nuvio.app.features.addons.python.PythonRunResult
+import com.nuvio.app.features.addons.python.PythonRuntime
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -19,6 +23,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -103,6 +108,9 @@ internal object AddonProgramPlatform {
             ?: JsonObject(emptyMap())
         try {
             when (operation) {
+                "python.available" -> pythonAvailable()
+                "python.run" -> pythonRun(context, slug, payload)
+                "python.start" -> pythonStart(context, slug, payload)
                 "available" -> available(slug, declared)
                 "start" -> start(context, slug, payload, declared)
                 "exec" -> exec(context, slug, payload, declared)
@@ -418,6 +426,186 @@ internal object AddonProgramPlatform {
         }
     }
 
+    // ------------------------------------------------------------------ python
+
+    private fun pythonAvailable(): String = success {
+        val host = PythonRuntime.host
+        put("available", host != null)
+        host?.version?.let { put("version", it) }
+    }
+
+    /** One checked Python request, ready to hand to the interpreter. */
+    private class PythonJob(val host: PythonHost, val request: PythonRunRequest)
+
+    private fun pythonJob(context: Context, slug: String, spec: JsonObject, runId: String): Result<PythonJob> {
+        val host = PythonRuntime.host
+            ?: return Result.failure(IllegalStateException("Python is not available in this build."))
+        val addonDir = ZipAddonPlatform.addonDir(slug)
+        val data = ZipAddonPlatform.dataDir(slug)
+        val recordings = recordingsDirectory(context)
+
+        val script = spec.string("script")?.trim()?.ifBlank { null }
+        val code = spec.string("code")?.takeIf { it.isNotBlank() }
+        if ((script == null) == (code == null)) {
+            return Result.failure(IllegalArgumentException("Give either \"script\" (a .py file in the addon) or \"code\"."))
+        }
+        if (code != null && code.length > MAX_PYTHON_CODE_CHARS) {
+            return Result.failure(IllegalArgumentException("\"code\" is too long. Put it in a .py file in the addon."))
+        }
+        var scriptFile: File? = null
+        if (script != null) {
+            scriptFile = File(addonDir, script)
+            if (!scriptFile.canonicalPath.startsWith(addonDir.canonicalPath + File.separator) || !scriptFile.isFile) {
+                return Result.failure(IllegalArgumentException("The script \"$script\" was not found in the addon."))
+            }
+        }
+        val args = readArgs(spec, recordings, data)
+            ?: return Result.failure(IllegalArgumentException("\"args\" must be a list of at most 300 short strings."))
+
+        // Folders the script can import from: its own folder, the addon root and the usual library folders.
+        val paths = buildList {
+            scriptFile?.parentFile?.let { add(it.absolutePath) }
+            add(addonDir.absolutePath)
+            listOf("lib", "python", "site-packages").map { File(addonDir, it) }.filter { it.isDirectory }.forEach { add(it.absolutePath) }
+        }.distinct()
+
+        val env = buildMap {
+            put("NUVIO_ADDON", addonDir.absolutePath)
+            put("NUVIO_DATA", data.absolutePath)
+            put("NUVIO_RECORDINGS", recordings.absolutePath)
+            put("HOME", data.absolutePath)
+            put("TMPDIR", File(data, "tmp").also { it.mkdirs() }.absolutePath)
+            putAll(readEnv(spec, recordings, data).filterKeys { !it.startsWith("PYTHON") })
+        }
+        val maxOutput = (spec.int("maxOutputChars") ?: 1_000_000).coerceIn(1_000, 8_000_000)
+        return Result.success(
+            PythonJob(
+                host,
+                PythonRunRequest(
+                    runId = runId,
+                    scriptPath = scriptFile?.absolutePath,
+                    code = code,
+                    args = args,
+                    paths = paths,
+                    env = env,
+                    stdin = spec.string("stdin")?.take(1_000_000),
+                    maxOutputChars = maxOutput,
+                ),
+            ),
+        )
+    }
+
+    /** Runs Python code or a script to the end and returns what it printed (stops it after timeoutMs). */
+    private suspend fun pythonRun(context: Context, slug: String, spec: JsonObject): String {
+        val runId = "py-${counter.incrementAndGet()}"
+        val job = pythonJob(context, slug, spec, runId).getOrElse { return failure(it.message ?: "Python is not available.") }
+        val timeoutMs = (spec.int("timeoutMs") ?: 60_000).coerceIn(1_000, 600_000).toLong()
+
+        var result: PythonRunResult? = null
+        var error: Throwable? = null
+        val worker = thread(isDaemon = true, name = "python-$runId") {
+            runCatching { job.host.run(job.request) }.onSuccess { result = it }.onFailure { error = it }
+        }
+        var timedOut = false
+        try {
+            runInterruptible(Dispatchers.IO) { worker.join(timeoutMs) }
+            if (worker.isAlive) {
+                timedOut = true
+                job.host.stop(runId)
+                runInterruptible(Dispatchers.IO) { worker.join(3_000) }
+            }
+        } finally {
+            if (worker.isAlive) job.host.stop(runId) // cancelled while waiting
+        }
+
+        error?.let { return failure(it.message ?: "Python failed to start.") }
+        val outcome = result ?: return failure("The script did not finish in time and could not be stopped.")
+        return success {
+            put("exitCode", outcome.exitCode)
+            put("timedOut", timedOut)
+            put("stdout", outcome.stdout)
+            put("stderr", outcome.stderr.takeLast(8_000))
+        }
+    }
+
+    /** Runs Python in the background (it shows up in list() and can be stopped with stop()). */
+    private fun pythonStart(context: Context, slug: String, spec: JsonObject): String {
+        val tag = spec.string("tag")?.take(500) ?: spec.string("script") ?: "python"
+        programs.values.firstOrNull { it.slug == slug && it.running && it.tag == tag }?.let { existing ->
+            return success {
+                put("id", existing.id)
+                put("already", true)
+            }
+        }
+        if (programs.values.count { it.slug == slug && it.running } >= MAX_PER_ADDON) {
+            return failure("Too many programs are already running for this addon.")
+        }
+
+        val id = "$slug-${counter.incrementAndGet()}"
+        val job = pythonJob(context, slug, spec, id).getOrElse { return failure(it.message ?: "Python is not available.") }
+        val maxMillis = (spec.int("maxMinutes") ?: 360).coerceIn(1, 1_440) * 60_000L
+        val name = spec.string("name")?.trim().orEmpty().ifBlank { "Python" }
+
+        val program = RunningProgram(
+            id = id,
+            slug = slug,
+            kind = "python",
+            name = name,
+            baseName = name,
+            tag = tag,
+            startedAt = System.currentTimeMillis(),
+            directory = recordingsDirectory(context),
+            bundled = true,
+        )
+        programs[program.id] = program
+        prune(slug)
+
+        AddonProgramState.activeCount.update { it + 1 }
+        startService(context)
+
+        program.job = scope.launch {
+            var result: PythonRunResult? = null
+            var failed: Throwable? = null
+            val worker = thread(isDaemon = true, name = "python-${program.id}") {
+                runCatching { job.host.run(job.request) { line -> program.appendLog(line) } }
+                    .onSuccess { result = it }
+                    .onFailure { failed = it }
+            }
+            program.abort = { job.host.stop(program.id) }
+            val startedAt = System.currentTimeMillis()
+            try {
+                while (worker.isAlive) {
+                    if (System.currentTimeMillis() - startedAt >= maxMillis) {
+                        program.appendLog("Stopped: reached the time limit")
+                        job.host.stop(program.id)
+                        break
+                    }
+                    delay(500)
+                }
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } finally {
+                if (worker.isAlive) {
+                    job.host.stop(program.id)
+                    withContext(NonCancellable + Dispatchers.IO) { worker.join(5_000) }
+                }
+                failed?.let { program.error = it.message ?: it.toString() }
+                result?.let { done ->
+                    if (done.exitCode != 0 && program.error == null) {
+                        program.error = "Exited with code ${done.exitCode}: ${done.stderr.lines().lastOrNull { it.isNotBlank() }.orEmpty()}"
+                    }
+                }
+                program.running = false
+                program.abort = null
+                AddonProgramState.activeCount.update { (it - 1).coerceAtLeast(0) }
+            }
+        }
+        return success {
+            put("id", program.id)
+            put("program", "python")
+        }
+    }
+
     // -------------------------------------------------------------- stop/list
 
     private fun stop(slug: String, payload: JsonObject): String {
@@ -500,6 +688,7 @@ internal object AddonProgramPlatform {
     private fun JsonObject.int(key: String): Int? = (this[key] as? JsonPrimitive)?.intOrNull
 
     private const val MAX_PER_ADDON = 4
+    private const val MAX_PYTHON_CODE_CHARS = 200_000
     private const val DEFAULT_USER_AGENT = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124.0 Mobile Safari/537.36"
     private val USER_AGENT_REGEX = Regex("^[\\x20-\\x7E]{1,200}$")
     private val ENV_NAME_REGEX = Regex("^[A-Za-z_][A-Za-z0-9_]{0,63}$")

@@ -38,6 +38,7 @@ import nuvio.composeapp.generated.resources.addons_zip_programs_inside
 import nuvio.composeapp.generated.resources.addons_zip_permissions_title
 import nuvio.composeapp.generated.resources.addons_permission_programs
 import nuvio.composeapp.generated.resources.addons_permission_player_ui
+import nuvio.composeapp.generated.resources.addons_permission_python
 import nuvio.composeapp.generated.resources.addons_permission_unknown
 import org.jetbrains.compose.resources.stringResource
 
@@ -57,6 +58,7 @@ private fun confirmMessage(name: String, permissions: Set<String>, programs: Lis
         when (permission) {
             PERMISSION_PROGRAMS -> stringResource(Res.string.addons_permission_programs)
             PERMISSION_PLAYER_UI -> stringResource(Res.string.addons_permission_player_ui)
+            PERMISSION_PYTHON -> stringResource(Res.string.addons_permission_python)
             else -> stringResource(Res.string.addons_permission_unknown, permission)
         }
     }

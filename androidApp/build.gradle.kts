@@ -16,6 +16,7 @@ fun readXcconfigValue(file: File, key: String): String? {
 
 plugins {
     alias(libs.plugins.androidApplication)
+    alias(libs.plugins.chaquopy)
     alias(libs.plugins.composeCompiler)
     alias(libs.plugins.sentry.android.gradle)
 }
@@ -47,6 +48,14 @@ val releaseAppVersionCode = readXcconfigValue(appVersionConfigFile, "CURRENT_PRO
 val requestedTaskNames = gradle.startParameter.taskNames.map { it.substringAfterLast(':') }
 val buildsReleaseApks = requestedTaskNames.any {
     it.startsWith("assemble", ignoreCase = true) && it.endsWith("Release", ignoreCase = true)
+}
+
+// Python for addons (nuvio.python). 3.11 is the newest version that still supports every ABI the app ships
+// (32-bit armeabi-v7a and x86 were dropped from Python 3.12 on). Needs Python 3.11 on the build machine.
+chaquopy {
+    defaultConfig {
+        version = "3.11"
+    }
 }
 
 android {
