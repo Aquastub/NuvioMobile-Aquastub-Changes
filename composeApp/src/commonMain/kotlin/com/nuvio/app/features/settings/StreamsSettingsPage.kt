@@ -22,6 +22,7 @@ import androidx.compose.material.icons.rounded.Visibility
 import com.nuvio.app.core.ui.DialogButton
 import com.nuvio.app.core.ui.DialogButtons
 import com.nuvio.app.core.ui.DialogButtonStyle
+import com.nuvio.app.core.ui.DialogOption
 import com.nuvio.app.core.ui.DialogSurface
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -107,6 +108,7 @@ internal fun LazyListScope.streamsSettingsContent(isTablet: Boolean) {
         val currentRules = currentSettings.rules
         var showBadgeImportDialog by rememberSaveable { mutableStateOf(false) }
         var showBadgePositionDialog by rememberSaveable { mutableStateOf(false) }
+        var showPlayerBadgesDialog by rememberSaveable { mutableStateOf(false) }
         var showBackgroundDialog by rememberSaveable { mutableStateOf(false) }
         val badgePlacementLabel = streamBadgePlacementLabel(currentSettings.badgePlacement)
 
@@ -170,6 +172,18 @@ internal fun LazyListScope.streamsSettingsContent(isTablet: Boolean) {
             BadgeUrlManagerDialog(
                 currentRules = currentRules,
                 onDismiss = { showBadgeImportDialog = false },
+            )
+        }
+
+        if (showPlayerBadgesDialog) {
+            PlayerBadgesDialog(
+                rules = currentRules,
+                selectedSource = currentSettings.playerBadgeSource,
+                onSourceSelected = { source ->
+                    StreamBadgeSettingsRepository.setPlayerBadgeSource(source)
+                    showPlayerBadgesDialog = false
+                },
+                onDismiss = { showPlayerBadgesDialog = false },
             )
         }
 
@@ -246,6 +260,46 @@ private fun StreamBackgroundModeDialog(
                     color = tokens.colors.textPrimary,
                 )
             }
+        }
+        DialogButtons {
+            DialogButton(
+                text = stringResource(Res.string.action_cancel),
+                onClick = onDismiss,
+            )
+        }
+    }
+}
+
+@Composable
+private fun playerBadgesLabel(rules: StreamBadgeRules, source: String): String =
+    rules.imports.firstOrNull { it.sourceUrl.equals(source, ignoreCase = true) }?.sourceUrl
+        ?: stringResource(Res.string.settings_stream_player_badges_same)
+
+@Composable
+private fun PlayerBadgesDialog(
+    rules: StreamBadgeRules,
+    selectedSource: String,
+    onSourceSelected: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val imports = rules.normalized().imports
+    val selected = imports.firstOrNull { it.sourceUrl.equals(selectedSource, ignoreCase = true) }?.sourceUrl.orEmpty()
+    DialogSurface(
+        onDismissRequest = onDismiss,
+        title = stringResource(Res.string.settings_stream_player_badges_title),
+        message = stringResource(Res.string.settings_stream_player_badges_description),
+    ) {
+        DialogOption(
+            text = stringResource(Res.string.settings_stream_player_badges_same),
+            selected = selected.isEmpty(),
+            onClick = { onSourceSelected("") },
+        )
+        imports.forEach { import ->
+            DialogOption(
+                text = import.sourceUrl,
+                selected = import.sourceUrl == selected,
+                onClick = { onSourceSelected(import.sourceUrl) },
+            )
         }
         DialogButtons {
             DialogButton(
